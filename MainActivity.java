@@ -1,4 +1,3 @@
-```java
 package fr.ngplus.commandes;
 
 import android.Manifest;
