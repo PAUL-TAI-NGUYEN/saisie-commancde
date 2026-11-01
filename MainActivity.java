@@ -272,15 +272,6 @@ byte[] tampon = new byte[65536];
 int n;
 while ((n = is.read(tampon)) > 0) b.write(tampon, 0, n);
 return b.toByteArray();
+
 }
 }
-```
-
-**Fichier 2 : `index.html`**
-
-```html
-<!DOCTYPE html>
-<html lang="fr">
-
-<body>
-
