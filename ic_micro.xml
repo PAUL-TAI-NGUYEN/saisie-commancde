@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Micro blanc, meme dessin que icone.svg de la version PWA -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.13"
+        android:scaleY="0.13"
+        android:translateX="20.7"
+        android:translateY="20.7">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M200,152 A56,56 0 0 1 312,152 L312,240 A56,56 0 0 1 200,240 Z" />
+        <path
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="28"
+            android:strokeLineCap="round"
+            android:pathData="M148,256 A108,108 0 0 0 364,256" />
+        <path
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="28"
+            android:strokeLineCap="round"
+            android:pathData="M256,364 L256,424 M200,424 L312,424" />
+    </group>
+</vector>

@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Saisie vocale de commandes</title>
+<style>
+  body { font-family: sans-serif; max-width: 640px; margin: 12px auto; padding: 0 12px; }
+  button { padding: 12px 18px; font-size: 16px; margin: 6px 4px 6px 0; cursor: pointer; }
+  label { display: block; margin-top: 10px; font-weight: bold; }
+  input { width: 100%; padding: 8px; font-size: 16px; box-sizing: border-box; }
+  .ligne-saisie { display: flex; gap: 6px; align-items: center; }
+  .ligne-saisie input { flex: 1; }
+  .ligne-saisie button { margin: 0; }
+  table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+  td, th { border: 1px solid #ccc; padding: 6px; font-size: 14px; }
+  .page { display: none; }
+  .page.active { display: block; }
+  .total { font-size: 18px; font-weight: bold; margin-top: 12px; }
+  .transcription { background: #f3f3f3; padding: 10px; min-height: 24px; margin-top: 10px; }
+  .transcription.ecoute { background: #e3f0ff; color: #1a73e8; font-weight: bold; }
+  #suggestions { margin-top: 6px; }
+  #suggestions div { border: 1px solid #99c; background: #eef; padding: 8px; margin-top: 4px; cursor: pointer; font-size: 14px; }
+  #suggestions div:hover { background: #dde; }
+  .code { color: #060; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<!-- FENETRE 1 : en-tete de la commande -->
+<div id="page1" class="page active">
+  <h2>Nouvelle commande</h2>
+
+  <label>Client (nom ou code)</label>
+  <div class="ligne-saisie">
+    <input id="client">
+    <button data-champ="client">&#127897;&#65039;</button>
+  </div>
+
+  <label>Date de livraison</label>
+  <div class="ligne-saisie">
+    <input id="date" type="date">
+    <button data-champ="date">&#127897;&#65039;</button>
+  </div>
+
+  <label>Fichier des articles (article.xml)</label>
+  <input type="file" id="fichierArticles" accept=".xml,text/xml,application/xml">
+  <div id="etatArticles" style="margin-top:6px;color:#a00;">Aucun article chargé.</div>
+
+  <div id="transcription1" class="transcription">Cliquez sur un micro et parlez.</div>
+  <button id="suivant">Page suivante &rarr;</button>
+  <hr>
+  <button id="export1">Exporter en CSV</button>
+  <span id="nbEnregistrees">0 ligne enregistrée</span>
+</div>
+
+<!-- FENETRE 2 : lignes d'articles -->
+<div id="page2" class="page">
+  <h2 id="titreCommande">Articles</h2>
+
+  <label>Produit</label>
+  <div class="ligne-saisie">
+    <input id="produit">
+    <button data-article="produit">&#127897;&#65039;</button>
+  </div>
+  <div id="suggestions"></div>
+  <div>Code article : <span id="codeArticle" class="code">-</span></div>
+
+  <label>Quantit&eacute; (ex. 3 ou 3 cartons)</label>
+  <div class="ligne-saisie">
+    <input id="quantite">
+    <button data-article="quantite">&#127897;&#65039;</button>
+  </div>
+
+  <label>Prix unitaire (&euro;)</label>
+  <div class="ligne-saisie">
+    <input id="prix" type="number" step="0.01" inputmode="decimal">
+    <button data-article="prix">&#127897;&#65039;</button>
+  </div>
+
+  <div id="transcription2" class="transcription">Cliquez sur le micro d'un champ et dites seulement la valeur.</div>
+
+  <button id="ajouter">Ajouter la ligne</button>
+  <button id="microCommande">&#127897;&#65039; Commande vocale</button>
+
+  <table id="lignes">
+    <thead><tr><th>Code</th><th>Produit</th><th>Qt&eacute;</th><th>Prix</th><th>Total</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="total">Total commande : <span id="totalCommande">0.00</span> &euro;</div>
+
+  <button id="retour">&larr; Retour</button>
+  <button id="valider">Valider la commande</button>
+  <button id="export">Exporter en CSV</button>
+</div>
+
+<script>
+// Pont vers l'application Android (absent si la page est ouverte dans un navigateur)
+const Natif = window.AndroidVoix || null;
+
+// ====== BASE ARTICLES (extraite de article.xml) : [code, libelle, libelle2, prix] ======
+let ARTICLES = [];
+
+// ====== OUTILS ======
+const NOMBRES = {
+  "un":1,"une":1,"deux":2,"trois":3,"quatre":4,"cinq":5,"six":6,"sept":7,"huit":8,"neuf":9,
+  "dix":10,"onze":11,"douze":12,"treize":13,"quatorze":14,"quinze":15,"seize":16,
+  "vingt":20,"trente":30,"quarante":40,"cinquante":50,"soixante":60,"cent":100
+};
+const JOURS = ["dimanche","lundi","mardi","mercredi","jeudi","vendredi","samedi"];
+const MOIS = ["janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre"];
+
+function versNombre(mot) {
+  mot = String(mot).replace(",", ".");
+  if (!isNaN(parseFloat(mot))) return parseFloat(mot);
+  return NOMBRES[mot.toLowerCase()] ?? null;
+}
+
+// Premier nombre contenu dans un texte ("3 litres" -> 3, "trois cartons" -> 3)
+function extraireNombre(texte) {
+  const m = String(texte).match(/\d+[.,]?\d*/);
+  if (m) return parseFloat(m[0].replace(",", "."));
+  for (const mot of String(texte).toLowerCase().split(/\s+/)) {
+    if (NOMBRES[mot] !== undefined) return NOMBRES[mot];
+  }
+  return 0;
+}
+
+function formaterDate(d) {
+  const a = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const j = String(d.getDate()).padStart(2, "0");
+  return a + "-" + m + "-" + j;
+}
+
+function dateComplete(t) {
+  const jourMots = { "premier":1,"un":1,"deux":2,"trois":3,"quatre":4,"cinq":5,"six":6,"sept":7,"huit":8,"neuf":9,"dix":10,"onze":11,"douze":12,"treize":13,"quatorze":14,"quinze":15,"seize":16,"vingt":20,"trente":30 };
+  const re = new RegExp("(\\d{1,2}|premier|un|deux|trois|quatre|cinq|six|sept|huit|neuf|dix|onze|douze|treize|quatorze|quinze|seize|vingt|trente)\\s*(?:er)?\\s+(" + MOIS.join("|") + ")(?:\\s+(\\d{4}))?", "i");
+  const m = t.match(re);
+  if (!m) return "";
+  const jour = /^\d/.test(m[1]) ? parseInt(m[1], 10) : jourMots[m[1].toLowerCase()];
+  const mois = MOIS.indexOf(m[2].toLowerCase());
+  const now = new Date();
+  const annee = m[3] ? parseInt(m[3], 10) : now.getFullYear();
+  let d = new Date(annee, mois, jour);
+  if (!m[3] && d < new Date(now.getFullYear(), now.getMonth(), now.getDate())) d = new Date(annee + 1, mois, jour);
+  return formaterDate(d);
+}
+
+function trouverDate(texte) {
+  const t = texte.toLowerCase();
+  const precise = dateComplete(t);
+  if (precise) return precise;
+  const d = new Date();
+  if (t.includes("après-demain")) { d.setDate(d.getDate() + 2); return formaterDate(d); }
+  if (t.includes("demain")) { d.setDate(d.getDate() + 1); return formaterDate(d); }
+  for (let i = 0; i < JOURS.length; i++) {
+    if (t.includes(JOURS[i])) {
+      let ecart = (i - d.getDay() + 7) % 7;
+      if (ecart === 0) ecart = 7;
+      d.setDate(d.getDate() + ecart);
+      return formaterDate(d);
+    }
+  }
+  return "";
+}
+
+// ====== RECHERCHE D'ARTICLE ======
+function normaliser(s) {
+  return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+}
+// Erreurs de reconnaissance vocale frequentes -> mot attendu
+const CORRECTIONS = { "mars":"mat", "max":"mat", "mac":"mat", "mate":"mat", "mathe":"mat", "litre":"l", "litres":"l" };
+function preparer(s) {
+  return normaliser(s).split(" ").map(w => CORRECTIONS[w] || w).join(" ");
+}
+// Index pre-calcule
+function nettoyerLib2(s) { return s.replace(/\*+[^*]*\*+/g, " ").replace(/\*+/g, " "); }
+let INDEX = [];
+function construireIndex() {
+  INDEX = ARTICLES.map(a => {
+    const txt = preparer(a[1] + " " + nettoyerLib2(a[2]));
+    return { a: a, mots: txt.split(" "), txt: txt };
+  });
+}
+
+// "15 l" ou "15l" dans la requete doit correspondre a "15L" dans le libelle
+function adapterRequete(req) {
+  return preparer(req).replace(/(\d+)\s+l\b/g, "$1l");
+}
+function adapterLibelle(txt) {
+  return txt.replace(/(\d+)\s+l\b/g, "$1l");
+}
+
+function chercherArticles(requete, n) {
+  if (INDEX.length === 0) return [];
+  const mots = adapterRequete(requete).split(" ").filter(Boolean);
+  if (mots.length === 0) return [];
+  const res = [];
+  for (const it of INDEX) {
+    const txt = adapterLibelle(it.txt);
+    const ws = txt.split(" ");
+    let score = 0;
+    for (const m of mots) {
+      if (ws.includes(m)) score += 3;
+      else if (ws.some(w => w.startsWith(m))) score += 2;
+      else if (txt.includes(m)) score += 1;
+      else score -= 2;
+    }
+    // Malus pour les mots du libelle non dits
+    const wsPrincipal = adapterLibelle(preparer(it.a[1])).split(" ").filter(Boolean);
+    const nonDits = wsPrincipal.filter(w => !mots.includes(w) && !mots.some(m => w.startsWith(m))).length;
+    score -= nonDits * 0.5;
+    if (score > 0) res.push({ score: score, a: it.a });
+  }
+  res.sort((x, y) => y.score - x.score || x.a[1].length - y.a[1].length);
+  return res.slice(0, n);
+}
+
+let articleChoisi = null; // [code, libelle, libelle2, prix]
+
+function choisirArticle(a) {
+  articleChoisi = a;
+  document.getElementById("produit").value = a[1];
+  document.getElementById("codeArticle").textContent = a[0];
+  if (a[3] > 0) document.getElementById("prix").value = a[3];
+  document.getElementById("suggestions").innerHTML = "";
+}
+
+function proposerArticles(phrase) {
+  const sugg = document.getElementById("suggestions");
+  sugg.innerHTML = "";
+  articleChoisi = null;
+  document.getElementById("codeArticle").textContent = "-";
+  const res = chercherArticles(phrase, 5);
+  if (res.length === 0) {
+    sugg.textContent = INDEX.length === 0
+      ? "Chargez d'abord le fichier article.xml sur la page 1."
+      : "Aucun article trouvé. Reformulez ou corrigez à la main.";
+    return;
+  }
+  // Un seul meilleur score net : on le prend directement
+  if (res.length === 1 || res[0].score - res[1].score >= 3) {
+    choisirArticle(res[0].a);
+    return;
+  }
+  res.forEach(r => {
+    const div = document.createElement("div");
+    div.textContent = r.a[0] + " - " + r.a[1] + " (" + r.a[3].toFixed(2) + " €)";
+    div.addEventListener("click", () => choisirArticle(r.a));
+    sugg.appendChild(div);
+  });
+}
+
+
+// ====== CHARGEMENT DU FICHIER ARTICLES (article.xml) ======
+function nettoyerTexte(s) { return (s || "").replace(/\s+/g, " ").replace(/^[ .]+|[ .]+$/g, ""); }
+
+function afficherEtatArticles(suffixe) {
+  const etat = document.getElementById("etatArticles");
+  etat.style.color = "#060";
+  etat.textContent = ARTICLES.length + " articles chargés" + (suffixe || ".");
+}
+
+// Au demarrage : reprend la liste memorisee par l'application (pas besoin de rechoisir le fichier)
+if (Natif && Natif.lireArticles) {
+  try {
+    const memo = Natif.lireArticles();
+    if (memo) {
+      ARTICLES = JSON.parse(memo);
+      construireIndex();
+      afficherEtatArticles(" (mémorisés). Choisissez un fichier pour mettre à jour.");
+    }
+  } catch (e) { ARTICLES = []; }
+}
+
+document.getElementById("fichierArticles").addEventListener("change", (e) => {
+  const fichier = e.target.files[0];
+  if (!fichier) return;
+  const etat = document.getElementById("etatArticles");
+  etat.style.color = "#555";
+  etat.textContent = "Lecture du fichier en cours...";
+  const lecteur = new FileReader();
+  lecteur.onload = () => {
+    try {
+      const xml = new DOMParser().parseFromString(lecteur.result, "text/xml");
+      if (xml.querySelector("parsererror")) throw new Error("XML invalide");
+      const liste = [];
+      xml.querySelectorAll("TABLE_CONTENU").forEach(n => {
+        const v = (nom) => { const x = n.querySelector(nom); return x ? x.textContent : ""; };
+        const code = (v("Cdart") || "").trim();
+        const lib = nettoyerTexte(v("Libart"));
+        if (!code || !lib) return;
+        liste.push([code, lib, nettoyerTexte(v("Libart2")), parseFloat(v("Px_t1")) || 0]);
+      });
+      if (liste.length === 0) throw new Error("aucun article trouvé dans ce fichier");
+      ARTICLES = liste;
+      construireIndex();
+      let memorise = false;
+      if (Natif && Natif.sauverArticles) {
+        try { memorise = Natif.sauverArticles(JSON.stringify(ARTICLES)); } catch (e2) {}
+      }
+      afficherEtatArticles(memorise ? " et mémorisés." : ".");
+    } catch (err) {
+      etat.style.color = "#a00";
+      etat.textContent = "Erreur de lecture : " + err.message;
+    }
+  };
+  lecteur.readAsText(fichier);
+});
+
+// ====== RECONNAISSANCE VOCALE ======
+// Dans l'application Android : moteur vocal du telephone (via Natif.ecouter).
+// Dans un navigateur : API vocale de Chrome.
+let quandResultat = null;
+let zoneEcoute = null;
+let reco = null;
+
+window.resultatVoix = (texte) => {
+  if (zoneEcoute) zoneEcoute.classList.remove("ecoute");
+  const cb = quandResultat;
+  quandResultat = null;
+  if (cb) cb(texte);
+};
+window.erreurVoix = (message) => {
+  if (zoneEcoute) {
+    zoneEcoute.classList.remove("ecoute");
+    zoneEcoute.textContent = "Micro : " + message;
+  } else {
+    alert("Micro : " + message);
+  }
+  quandResultat = null;
+};
+window.pretVoix = () => {
+  if (zoneEcoute) zoneEcoute.classList.add("ecoute");
+};
+
+if (!Natif) {
+  const Reco = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (Reco) {
+    reco = new Reco();
+    reco.lang = "fr-FR";
+    reco.interimResults = false;
+    reco.onresult = (e) => window.resultatVoix(e.results[0][0].transcript);
+    reco.onerror = (e) => window.erreurVoix(e.error);
+  }
+}
+
+function ecouter(callback, zone) {
+  quandResultat = callback;
+  zoneEcoute = zone || null;
+  if (Natif) { Natif.ecouter(); return; }
+  if (!reco) { alert("Reconnaissance vocale indisponible. Utilisez Chrome."); return; }
+  try { reco.start(); window.pretVoix(); } catch (e) {}
+}
+
+// ====== FENETRE 1 ======
+document.querySelectorAll("[data-champ]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const champ = btn.dataset.champ;
+    const zone = document.getElementById("transcription1");
+    zone.textContent = "Je vous écoute...";
+    ecouter((phrase) => {
+      zone.textContent = "« " + phrase + " »";
+      if (champ === "client") {
+        document.getElementById("client").value = phrase.replace(/^(client|commande)\s+(pour\s+)?/i, "").replace(/[.]+$/, "").trim();
+      } else {
+        const d = trouverDate(phrase);
+        if (d) document.getElementById("date").value = d;
+        else zone.textContent = "Date non comprise (« " + phrase + " »). Dites par exemple : demain, vendredi, ou 2 novembre 2026.";
+      }
+    }, zone);
+  });
+});
+
+document.getElementById("suivant").addEventListener("click", () => {
+  if (!document.getElementById("client").value.trim()) { alert("Le nom du client est obligatoire."); return; }
+  document.getElementById("titreCommande").textContent = "Articles pour " + document.getElementById("client").value;
+  document.getElementById("page1").classList.remove("active");
+  document.getElementById("page2").classList.add("active");
+  window.scrollTo(0, 0);
+});
+
+// ====== FENETRE 2 ======
+let lignes = [];
+
+document.querySelectorAll("[data-article]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const champ = btn.dataset.article;
+    const zone = document.getElementById("transcription2");
+    zone.textContent = "Je vous écoute... (" + champ + ")";
+    ecouter((phrase) => {
+      zone.textContent = "« " + phrase + " »";
+      let valeur = phrase.replace(/[.]+$/, "").trim();
+      if (champ === "produit") {
+        document.getElementById("produit").value = valeur;
+        proposerArticles(valeur);
+        return;
+      }
+      if (champ === "prix") {
+        const nb = valeur.match(/\d+[.,]?\d*/);
+        if (nb) valeur = nb[0].replace(",", ".");
+        else { const p = versNombre(valeur.split(/\s+/)[0]); valeur = p !== null ? p : ""; }
+      } else if (champ === "quantite") {
+        const premier = valeur.split(/\s+/)[0];
+        const q = versNombre(premier);
+        if (q !== null && isNaN(parseFloat(premier))) valeur = q + " " + valeur.split(/\s+/).slice(1).join(" ");
+        valeur = valeur.trim();
+      }
+      document.getElementById(champ).value = valeur;
+    }, zone);
+  });
+});
+
+// Si l'utilisateur corrige le produit a la main, on relance la recherche
+document.getElementById("produit").addEventListener("change", (e) => {
+  if (e.target.value.trim()) proposerArticles(e.target.value);
+});
+
+document.getElementById("microCommande").addEventListener("click", () => {
+  const zone = document.getElementById("transcription2");
+  zone.textContent = "Je vous écoute... (commande)";
+  ecouter((phrase) => {
+    zone.textContent = "« " + phrase + " »";
+    const cmd = phrase.toLowerCase();
+    if (/ajout/.test(cmd)) document.getElementById("ajouter").click();
+    else if (/valid/.test(cmd)) document.getElementById("valider").click();
+    else if (/(précédent|retour)/.test(cmd)) document.getElementById("retour").click();
+    else zone.textContent = "Commande non comprise : dites ajoute la ligne, valide la commande ou retour.";
+  }, zone);
+});
+
+function afficherLignes() {
+  const corps = document.querySelector("#lignes tbody");
+  corps.innerHTML = "";
+  let total = 0;
+  lignes.forEach((l, i) => {
+    const t = extraireNombre(l.quantite) * l.prix;   // calcul avec le nombre seul
+    total += t;
+    const tr = document.createElement("tr");
+    [l.code || "-", l.produit, l.quantite, l.prix, t.toFixed(2)].forEach(v => {
+      const td = document.createElement("td");
+      td.textContent = v;
+      tr.appendChild(td);
+    });
+    const tdSupp = document.createElement("td");
+    const b = document.createElement("button");
+    b.textContent = "✖";
+    b.addEventListener("click", () => { lignes.splice(i, 1); afficherLignes(); });
+    tdSupp.appendChild(b);
+    tr.appendChild(tdSupp);
+    corps.appendChild(tr);
+  });
+  document.getElementById("totalCommande").textContent = total.toFixed(2);
+}
+
+document.getElementById("ajouter").addEventListener("click", () => {
+  const produit = document.getElementById("produit").value.trim();
+  const quantite = document.getElementById("quantite").value.trim();
+  const prix = parseFloat(document.getElementById("prix").value) || 0;
+  if (!produit || !(extraireNombre(quantite) > 0)) { alert("Produit et quantité sont obligatoires."); return; }
+  lignes.push({ code: articleChoisi ? articleChoisi[0] : "", produit: produit, quantite: quantite, prix: prix });
+  afficherLignes();
+  ["produit", "quantite", "prix"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("codeArticle").textContent = "-";
+  document.getElementById("suggestions").innerHTML = "";
+  articleChoisi = null;
+  document.getElementById("transcription2").textContent = "Ligne ajoutée. Dictez l'article suivant.";
+});
+
+document.getElementById("retour").addEventListener("click", () => {
+  document.getElementById("page2").classList.remove("active");
+  document.getElementById("page1").classList.add("active");
+  window.scrollTo(0, 0);
+});
+
+// ====== VALIDATION ET EXPORT ======
+let commandes = [];
+try { commandes = JSON.parse(localStorage.getItem("commandes") || "[]"); } catch (e) { commandes = []; }
+
+document.getElementById("valider").addEventListener("click", () => {
+  if (lignes.length === 0) { alert("Ajoutez au moins une ligne."); return; }
+  const client = document.getElementById("client").value.trim();
+  const date = document.getElementById("date").value;
+  lignes.forEach(l => {
+    commandes.push({ client: client, date: date, code: l.code, produit: l.produit, quantite: l.quantite, prix: l.prix,
+                     total: (extraireNombre(l.quantite) * l.prix).toFixed(2) });
+  });
+  try { localStorage.setItem("commandes", JSON.stringify(commandes)); } catch (e) {}
+  majCompteur();
+  alert("Commande validée pour " + client + " : " + lignes.length + " ligne(s).");
+  lignes = [];
+  afficherLignes();
+  document.getElementById("client").value = "";
+  document.getElementById("date").value = "";
+  document.getElementById("page2").classList.remove("active");
+  document.getElementById("page1").classList.add("active");
+});
+
+function majCompteur() {
+  const n = commandes.length;
+  document.getElementById("nbEnregistrees").textContent = n + (n > 1 ? " lignes enregistrées" : " ligne enregistrée");
+}
+majCompteur();
+
+function texteCsv() {
+  const entete = "Client;Livraison;Code article;Produit;Quantité;Prix;Total";
+  // Lignes affichees a l'ecran (pas encore validees) + commandes deja validees
+  const clientEcran = document.getElementById("client").value.trim();
+  const dateEcran = document.getElementById("date").value;
+  const affichees = lignes.map(l => ({ client: clientEcran, date: dateEcran, code: l.code, produit: l.produit, quantite: l.quantite, prix: l.prix,
+                                       total: (extraireNombre(l.quantite) * l.prix).toFixed(2) }));
+  const toutes = commandes.concat(affichees);
+  if (toutes.length === 0) return null;
+  const champ = (v) => '"' + String(v === undefined || v === null ? "" : v).replace(/"/g, '""') + '"';
+  const corps = toutes.map(c => [c.client, c.date, c.code, c.produit, c.quantite, String(c.prix).replace(".", ","), String(c.total).replace(".", ",")].map(champ).join(";"));
+  return "﻿" + [entete].concat(corps).join("\n");
+}
+
+["export", "export1"].forEach(id => document.getElementById(id).addEventListener("click", () => {
+  const texte = texteCsv();
+  if (texte === null) { alert("Aucune ligne à exporter."); return; }
+  if (Natif) {
+    // L'application enregistre dans Telechargements puis propose de l'envoyer
+    Natif.enregistrerCsv(texte);
+    return;
+  }
+  const blob = new Blob([texte], { type: "text/csv;charset=utf-8" });
+  const lien = document.createElement("a");
+  lien.href = URL.createObjectURL(blob);
+  lien.download = "commandes.csv";
+  lien.click();
+}));
+</script>
+</body>
+</html>
