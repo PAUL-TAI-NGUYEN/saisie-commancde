@@ -1,3 +1,29 @@
 plugins {
-    id 'com.android.application' version '8.7.3' apply false
+    id 'com.android.application'
 }
+
+android {
+    namespace 'fr.ngplus.commandes'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "fr.ngplus.commandes"
+        minSdk 26          // Android 8.0 et plus
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+// Aucune bibliotheque externe : l'application n'utilise que le systeme Android.
