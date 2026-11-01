@@ -531,6 +531,17 @@ function texteCsv() {
   lien.download = "commandes.csv";
   lien.click();
 }));
+  function emailUtilisateur() {
+  let e = localStorage.getItem("email") || "";
+  while (!/^\S+@\S+\.\S+$/.test(e)) {
+    e = prompt("Votre adresse email pour recevoir les commandes :", e);
+    if (e === null) return "";
+    e = e.trim();
+  }
+  localStorage.setItem("email", e);
+  return e;
+}
+setTimeout(emailUtilisateur, 500);
 </script>
 </body>
 </html>
