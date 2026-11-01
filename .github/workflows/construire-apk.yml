@@ -1,5 +1,88 @@
-<?xml version="1.0" encoding="utf-8"?>
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/bleu" />
-    <foreground android:drawable="@drawable/ic_micro" />
-</adaptive-icon>
+name: Construire l'APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ranger les fichiers
+        run: |
+          set -e
+          trouve() {
+            f=$(find . -path ./.git -prune -o -path ./projet -prune -o -type f -name "$1" -print | head -1)
+            if [ -z "$f" ]; then echo "::error::Fichier manquant dans le depot : $1" >&2; exit 1; fi
+            echo "$f"
+          }
+          M=projet/app/src/main
+          mkdir -p $M/java/fr/ngplus/commandes $M/assets $M/res/values $M/res/drawable $M/res/mipmap-anydpi-v26
+          cp "$(trouve AndroidManifest.xml)" $M/
+          cp "$(trouve MainActivity.java)"   $M/java/fr/ngplus/commandes/
+          cp "$(trouve index.html)"          $M/assets/
+          cp "$(trouve strings.xml)"         $M/res/values/
+          cp "$(trouve styles.xml)"          $M/res/values/
+          cp "$(trouve ic_micro.xml)"        $M/res/drawable/
+          cp "$(trouve ic_launcher.xml)"     $M/res/mipmap-anydpi-v26/
+
+          cat > projet/settings.gradle <<'EOF'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "Commandes"
+          include ':app'
+          EOF
+
+          cat > projet/build.gradle <<'EOF'
+          plugins { id 'com.android.application' version '8.7.3' apply false }
+          EOF
+
+          cat > projet/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat > projet/app/build.gradle <<'EOF'
+          plugins { id 'com.android.application' }
+          android {
+              namespace 'fr.ngplus.commandes'
+              compileSdk 34
+              defaultConfig {
+                  applicationId "fr.ngplus.commandes"
+                  minSdk 26
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          EOF
+          find projet -type f | sort
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14.3
+
+      - name: Compiler
+        working-directory: projet
+        run: gradle assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Commandes-apk
+          path: projet/app/build/outputs/apk/debug/app-debug.apk
