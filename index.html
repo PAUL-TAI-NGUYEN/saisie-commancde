@@ -50,7 +50,7 @@
   <div id="transcription1" class="transcription">Cliquez sur un micro et parlez.</div>
   <button id="suivant">Page suivante &rarr;</button>
   <hr>
-  <button id="export1">Exporter en CSV</button>
+  <button id="export1">Envoyer la commande par email</button>
   <span id="nbEnregistrees">0 ligne enregistrée</span>
 </div>
 
@@ -91,7 +91,7 @@
 
   <button id="retour">&larr; Retour</button>
   <button id="valider">Valider la commande</button>
-  <button id="export">Exporter en CSV</button>
+  <button id="export">Envoyer la commande par email</button>
 </div>
 
 <script>
@@ -522,7 +522,7 @@ function texteCsv() {
   if (texte === null) { alert("Aucune ligne à exporter."); return; }
   if (Natif) {
     // L'application enregistre dans Telechargements puis propose de l'envoyer
-    Natif.enregistrerCsv(texte);
+    Natif.enregistrerCsv(texte, emailUtilisateur());
     return;
   }
   const blob = new Blob([texte], { type: "text/csv;charset=utf-8" });
